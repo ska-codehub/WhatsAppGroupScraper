@@ -1,6 +1,10 @@
+# main file for the scraping
+# @author: Sk Khurshid Alam
+
 import os
 import sys
 import signal
+import configparser
 import argparse
 from pathlib import Path
 import time
@@ -19,18 +23,28 @@ from bs4 import BeautifulSoup
 import traceback
 
 BASE_DIR = Path("./")
+CONFIGURATION_FILE = BASE_DIR / 'settings.config'
 DATA_DIR = BASE_DIR / "data"
-ARCHIVE_DIR = BASE_DIR / "archive"
 CHROME_FOLDER = BASE_DIR / "chrome"
 USER_DATA_DIR = CHROME_FOLDER / "user-data"
 GROUP_NAMES_PATH = BASE_DIR / "groupnames.json"
 
+
+DATA_DIR.mkdir(exist_ok=True)
+CHROME_FOLDER.mkdir(exist_ok=True)
 USER_DATA_DIR.mkdir(exist_ok=True)
 
-SITE_DOMAIN = "web.whatsapp.com"
-LOGIN_URL = f"https://{SITE_DOMAIN}"
-LOGIN_TITLE = "WhatsApp"
-LOGIN_REDIRECT_TITLE = LOGIN_TITLE
+config = configparser.RawConfigParser()
+config.read(CONFIGURATION_FILE)
+SETTINGS = dict(config.items('settings'))
+
+PROJECT_NAME = SETTINGS.get('project_name').strip()
+PROJECT_DESCRIPTION = SETTINGS.get('project_description').strip()
+VERSION = SETTINGS.get('version').strip()
+SITE_DOMAIN = SETTINGS.get('site_domain').strip()
+LOGIN_URL = SETTINGS.get('login_url').strip()
+LOGIN_TITLE = SETTINGS.get('login_title').strip()
+LOGIN_REDIRECT_TITLE = SETTINGS.get('login_redirect_title').strip()
 
 HEALTH_CHECK_URL = "https://www.google.com"
 HEALTH_CHECK_TITLE = "Google"
@@ -621,13 +635,12 @@ class WhatsAppScraper:
             print("WhatsAppScraper.start_scraping Error2: ", e, traceback.format_exc())
         self.kill_browser_process()
             
-                    
 
 
 if __name__ == "__main__":
     argv = sys.argv
-    parser = argparse.ArgumentParser(prog=f"{argv[0].split(os.sep)[-1]}", description="WhatsApp Scraper")
-    parser.version = '1.0'
+    parser = argparse.ArgumentParser(prog=PROJECT_NAME, description=PROJECT_DESCRIPTION)
+    parser.version = VERSION
     parser.add_argument("-v", "--version", action="version", version=parser.version)
     parser.add_argument(
         "-inviz",
@@ -645,4 +658,3 @@ if __name__ == "__main__":
     print("INVISIBLE: ", INVISIBLE)
     wp_scraper = WhatsAppScraper(invisible=INVISIBLE)
     wp_scraper.start_scraping()
-
