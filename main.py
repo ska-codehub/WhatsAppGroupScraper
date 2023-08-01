@@ -3,7 +3,10 @@
 
 import os
 import sys
+import shutil
 import signal
+import psutil
+from contextlib import suppress
 import configparser
 import argparse
 from pathlib import Path
@@ -22,16 +25,31 @@ from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 import traceback
 
+TRUTHY = [
+    'TRUE', 'True', 'true', 'T', 't', True,
+    '1', 1,
+    'ON', 'On', 'on',
+    'YES', 'Yes', 'yes', 'Y', 'y'
+]
+
+
+FALSY = [
+    'FALSE', 'False', 'false', 'F', 'f', False,
+    '0', 0,
+    'OFF', 'Off', 'off',
+    'NO', 'No', 'no', 'N', 'n'
+]
+
 BASE_DIR = Path("./")
 CONFIGURATION_FILE = BASE_DIR / 'settings.config'
 DATA_DIR = BASE_DIR / "data"
-CHROME_FOLDER = BASE_DIR / "chrome"
-USER_DATA_DIR = CHROME_FOLDER / "user-data"
+CHROME_DIR = BASE_DIR / "chrome"
+USER_DATA_DIR = CHROME_DIR / "user-data"
 GROUP_NAMES_PATH = BASE_DIR / "groupnames.json"
 
 
 DATA_DIR.mkdir(exist_ok=True)
-CHROME_FOLDER.mkdir(exist_ok=True)
+CHROME_DIR.mkdir(exist_ok=True)
 USER_DATA_DIR.mkdir(exist_ok=True)
 
 config = configparser.RawConfigParser()
@@ -46,8 +64,8 @@ LOGIN_URL = SETTINGS.get('login_url').strip()
 LOGIN_TITLE = SETTINGS.get('login_title').strip()
 LOGIN_REDIRECT_TITLE = SETTINGS.get('login_redirect_title').strip()
 
-HEALTH_CHECK_URL = "https://www.google.com"
-HEALTH_CHECK_TITLE = "Google"
+HEALTH_CHECK_URL = SETTINGS.get('health_check_url').strip()
+HEALTH_CHECK_TITLE = SETTINGS.get('health_check_title').strip()
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
@@ -63,17 +81,17 @@ def confirmation_input(ask_str, ask_type):
     ask_str = f"{ask_str} [{ask_type}]: "
     while True:
         ask_value = input(ask_str).lower()
-        if not ask_value in ['', 'yes', 'y', 'no', 'n']:
+        if not ask_value in [''] + TRUTHY + FALSY:
             print("Please provide a valid confirmation!")
             continue
         if ask_type == 'Y/n':
-            return ask_value in ['', 'yes', 'y']
+            return ask_value in [''] + TRUTHY
         elif ask_type == 'y/N':
-            return ask_value in ['yes', 'y']
+            return ask_value in TRUTHY
         elif ask_type == 'N/y':
-            return ask_value in ['yes', 'y']
+            return ask_value in TRUTHY
         elif ask_type == 'n/Y':
-            return ask_value in ['', 'yes', 'y']
+            return ask_value in [''] + TRUTHY
 
 
 class WhatsAppScraper:
@@ -106,10 +124,9 @@ class WhatsAppScraper:
             print("WhatsAppScraper.is_dom_ready Error: ", e, traceback.format_exc())
             return False        
 
-    def is_title_valid(self, title=None):
+    def is_title_valid(self, title=""):
         try:
-            if title is None:return True
-            return self.browser.title.strip()==title
+            return self.browser.title==title or self.browser.title.strip()==title.strip()
         except Exception as e:
             print("WhatsAppScraper.is_title_valid Error: ", e, traceback.format_exc())
             return False
@@ -154,63 +171,59 @@ class WhatsAppScraper:
             print("NOT OK")
             return False
     
-    def kill_browser_process(self):
-        killed = False        
+    def kill_browser_process(self):     
         try:
-            if self.browser is not None:
+            if hasattr(self, "browser") and self.browser is not None:
                 print("Killing browser instances and process")
-                pid = int(self.browser.service.process.id)
+                try:
+                    pid = int(self.browser.service.process.id)
+                except:
+                    pid = None
                 try:
                     self.browser.service.process.send_signal(signal.SIGTERM)
                 except:
                     pass
                 try:
-                    if self.browser.service is not None:
-                        self.browser.close()
+                    self.browser.close()
                 except:
                     pass
                 try:
-                    if self.browser.service is not None:
-                        self.browser.quit()
-                    if self.browser.service is None:
-                        killed = True
+                    self.browser.quit()
                 except:
                     pass
                 try:
-                    if not killed and self.browser.service is not None:
+                    if pid is not None:
                         os.kill(pid, signal.SIGTERM)
-                    killed = True
                 except:
                     pass
-                try:
-                    if not killed and self.browser.service is not None:
-                        import psutil
-                        from contextlib import suppress
-                        for process in psutil.process_iter():
-                            try:
-                                if process.name() == "chrome.exe" \
-                                    and "--test-type=webdriver" in process.cmdline():
-                                    with suppress(psutil.NoSuchProcess):
-                                        try:
-                                            os.kill(process.pid, signal.SIGTERM)
-                                            killed = True
-                                        except:
-                                            pass
-                            except:
-                                pass
-                except:
-                    pass
+            try:
+                for process in psutil.process_iter():
+                    try:
+                        if process.name() == "chrome.exe" \
+                            and "--test-type=webdriver" in process.cmdline():
+                            with suppress(psutil.NoSuchProcess):
+                                try:
+                                    os.kill(process.pid, signal.SIGTERM)
+                                except:
+                                    pass
+                    except:
+                        pass
+            except:
+                pass
         except:
             pass
-        if killed:
-            print("Browser closed and webdriver process killed!")
-        else:
-            print("Browser and Webdriver process NOT killed !!!!")
+        
+        if hasattr(self, "browser"):
+            if self.browser is None or not hasattr(self.browser, "service") or self.browser.service:
+                print("Browser closed and webdriver process killed!")
+                self.browser = None
+            else:
+                print("Browser and Webdriver process NOT killed !!!!")
 
 
     def config_browser(self, *args, **kwargs):
         print("Configuring browser...")
-        chrome_driver_path = CHROME_FOLDER / 'chromedriver.exe'
+        chrome_driver_path = CHROME_DIR / 'chromedriver.exe'
         self.kill_browser_process()
         options = Options()
         options.page_load_strategy = "none"
@@ -278,12 +291,27 @@ class WhatsAppScraper:
             print("WhatsAppScraper.get_clickable_element Error: ", e)
         return el
 
+    def cleanup_session_login(self):
+        if self.is_title_valid(None) or self.is_title_valid(""):
+            print("Re-configuring and Re-loging...")
+            if USER_DATA_DIR.exists():
+                self.kill_browser_process()
+                shutil.rmtree(USER_DATA_DIR)
+                USER_DATA_DIR.mkdir(exist_ok=True)
+            self.config_browser()
+            return self.login()
+        return False
 
     def login(self):
         if self.get_page(LOGIN_URL, LOGIN_TITLE):
             time.sleep(3)
             qrcode_el = self.browser.find_elements(By.XPATH, "//div[@data-testid='qrcode']")
-            if len(qrcode_el)==0:return True
+            if len(qrcode_el)==0:
+                landing_title_el = self.browser.find_elements(By.XPATH, "//div[@class='landing-title']")
+                if len(landing_title_el)>0:
+                    self.browser.refresh()
+                else:
+                    return True
             print("Please scan the QR Code to login!")
             while True:
                 if confirmation_input("Done with scanning QR code?", 'y/N')==True:
@@ -293,13 +321,14 @@ class WhatsAppScraper:
                         print(f"Waiting for login redirect title {LOGIN_REDIRECT_TITLE}!")
                         if not self.is_page_ready(LOGIN_REDIRECT_TITLE):
                             if not self.is_title_valid(LOGIN_REDIRECT_TITLE):
-                                print("Couldn't login!!! Re-loging....")
-                                return self.login()
+                                if not self.cleanup_session_login():
+                                    print("Couldn't login!!! Re-loging....")
+                                    return self.login()
                         time.sleep(3)
                         return True
                     else:
                         print("Scanning not done yet! Please scan the QR code...")
-        return False
+        return self.cleanup_session_login()
         
     def get_names_mobile(self):
         names = []
